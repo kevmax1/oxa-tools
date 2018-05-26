@@ -336,7 +336,7 @@ retry-command()
     local tasksOfPrev=
     local alreadyUpgraded=
     for (( a=1; a<=$retry_count; a++ )) ; do
-        message="$optionalDescription attempt number: $a"
+        message="$optionalDescription attempt number: $a of $retry_count"
 
         # Some failures can be resolved by fixing packages.
         if [[ -n "$fix_packages" ]] ; then
@@ -618,7 +618,13 @@ sync_repo()
     else
         pushd $repo_path
 
-        sudo git fetch --all --tags --prune
+        if is_valid_branch $(get_current_branch) ; then
+            # git pull is a fetch then merge, but merge only
+            # makes sense when the local repo has a branch.
+            sudo git pull --all --tags --prune
+        else
+            sudo git fetch --all --tags --prune
+        fi
         exit_on_error "Failed syncing repository $repo_url to $repo_path"
 
         popd
@@ -638,6 +644,18 @@ sync_repo()
     popd
 }
 
+add_remote()
+{
+    local remoteName=$1
+    local remoteUrl="$2"
+
+    if ! ( git remote | grep "$remoteName" ) ; then
+        git remote add $remoteName $remoteUrl
+    fi
+
+    git fetch $remoteName > /dev/null 2>&1
+}
+
 cherry_pick_wrapper()
 {
     local hash=$1
@@ -650,6 +668,21 @@ cherry_pick_wrapper()
 
     git cherry-pick -x --strategy=recursive -X theirs $hash --keep-redundant-commits
     exit_on_error "Failed to cherry pick essential fix"
+}
+
+get_current_branch()
+{
+    # Current branch is prefixed with an asterisk. Remove it.
+    local prefix='* '
+    echo $(git branch | grep "$prefix" | sed "s/$prefix//g")
+}
+
+is_valid_branch()
+{
+    local branch=$1
+
+    # Is branch useful?
+    [[ -n "$branch" ]] && [[ $branch != null ]] && [[ $branch != *"no branch"* ]] && [[ $branch != *"detached"* ]]
 }
 
 #############################################################################
@@ -1610,6 +1643,12 @@ move_mysql_datadirectory()
     exit_on_error "Could not start mysql server after moving its data directory on '${HOSTNAME}' !" "${ERROR_MYSQL_DATADIRECTORY_MOVE_FAILED}" "${subject}" $admin_email_address
 }
 
+add-key-adv()
+{
+    sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys EB3E94ADBE1229CF
+    sudo apt-get update
+}
+
 #############################################################################
 # Wrapper function for doing role-based tools installation
 #############################################################################
@@ -1619,7 +1658,10 @@ install-tools()
 
     # Most docker containers don't have sudo pre-installed.
     install-sudo
-
+    
+    #load pub key of azur-cli
+    add-key-adv
+    
     # "desktop environment" flavors of ubuntu like xubuntu don't come with full ssh, but server edition generaly does"
     install-ssh
     install-git
@@ -1655,6 +1697,9 @@ install-tools()
         log "Installing Mysql Utilities on ${HOSTNAME}"
         install-mysql-utilities
     fi
+
+    # install OMI for azure instrumentation
+    install-omi
 }
 
 #############################################################################
